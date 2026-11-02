@@ -20,6 +20,7 @@
           --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.25);
         }
       }
+      [hidden] { display: none !important; }
       * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
       body { margin: 0; font-family: Inter, Arial, Helvetica, sans-serif; background: var(--bg); color: var(--ink); }
       main { max-width: 480px; margin: 0 auto; padding: 20px 16px 40px; }
@@ -27,6 +28,9 @@
       header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
       header h1 { font-size: 20px; font-weight: 700; margin: 0; letter-spacing: -.01em; }
       header .today { font-size: 13px; color: var(--muted); }
+      header .right { display: flex; align-items: center; gap: 8px; }
+      .icon-btn { width: 36px; height: 36px; border-radius: 10px; border: 0; background: var(--chip); color: var(--ink); font-size: 18px; cursor: pointer; }
+      .help { font-size: 13px; color: var(--muted); line-height: 1.5; margin: 0; }
 
       /* Hero: this month's spend */
       .hero {
@@ -122,8 +126,23 @@
     <main>
       <header>
         <h1>Home Stock</h1>
-        <span class="today" id="today"></span>
+        <div class="right">
+          <span class="today" id="today"></span>
+          <button type="button" id="settings-btn" class="icon-btn" aria-label="Connection settings" hidden>⚙</button>
+        </div>
       </header>
+
+      <section class="card" id="setup" hidden>
+        <h2>Connect to your sheet</h2>
+        <p class="help">Paste the Web app URL (Apps Script → Deploy → Manage deployments) and the access key printed by <b>createAccessKey</b>.</p>
+        <label for="api-url">Web app URL</label>
+        <input id="api-url" inputmode="url" autocapitalize="off" spellcheck="false" placeholder="https://script.google.com/macros/s/…/exec">
+        <label for="api-key">Access key</label>
+        <input id="api-key" autocapitalize="off" spellcheck="false" placeholder="Paste your key">
+        <button type="button" id="connect" class="save">Connect</button>
+      </section>
+
+      <div id="app">
 
       <section class="hero" aria-live="polite">
         <div class="label" id="month">This month</div>
@@ -186,6 +205,7 @@
           <li class="item"><div class="skeleton" style="height:40px;width:100%"></div></li>
         </ul>
       </section>
+      </div>
     </main>
 
     <div id="toast" role="status"></div>
@@ -204,6 +224,40 @@
         return `var(${PALETTE[i >= 0 ? i % PALETTE.length : PALETTE.length - 1]})`;
       };
       const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      /* ---------- Server calls: Apps Script page or Android app ---------- */
+      const NATIVE = !!window.AndroidBridge;
+      const pending = {}; let seq = 0;
+      window.__nativeResolve = (id, ok, text) => {
+        const p = pending[id]; if (!p) return;
+        delete pending[id];
+        ok ? p.res(text) : p.rej(new Error(text || 'No internet connection'));
+      };
+      const settings = () => { try { return JSON.parse(AndroidBridge.getSettings() || '{}'); } catch (e) { return {}; } };
+
+      function nativeCall(action, data) {
+        const s = settings();
+        if (!s.url) return Promise.reject(new Error('Not connected yet'));
+        const id = String(++seq);
+        return new Promise((res, rej) => {
+          pending[id] = { res, rej };
+          AndroidBridge.request(id, s.url, JSON.stringify({ action, key: s.key, data }));
+        }).then(text => {
+          let out;
+          try { out = JSON.parse(text); }
+          catch (e) { throw new Error('Unexpected reply. In Apps Script set "Who has access" to "Anyone".'); }
+          if (!out.ok) throw new Error(out.error || 'Request failed');
+          return out.result;
+        });
+      }
+
+      function call(name, arg) {
+        if (NATIVE) return nativeCall(name, arg);
+        return new Promise((res, rej) => {
+          const r = google.script.run.withSuccessHandler(res).withFailureHandler(rej);
+          arg === undefined ? r[name]() : r[name](arg);
+        });
+      }
+
       const localISO = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 
       function toast(msg, ok) {
@@ -241,7 +295,7 @@
         };
       }
 
-      function fillSelect(sel, values) { values.forEach(v => sel.add(new Option(v, v))); }
+      function fillSelect(sel, values) { sel.length = 1; values.forEach(v => sel.add(new Option(v, v))); }
 
       function resetForm() {
         ['item', 'price', 'notes'].forEach(id => ($(id).value = ''));
@@ -257,19 +311,15 @@
         if (!data.item.trim()) { $('item').focus(); return toast('Enter an item name', false); }
         if (!data.price) { $('price').focus(); return toast('Enter a price', false); }
         $('save').disabled = true; $('save').textContent = 'Saving…';
-        google.script.run
-          .withSuccessHandler(res => {
-            $('save').disabled = false; $('save').textContent = 'Save item';
+        call('addItem', data)
+          .then(res => {
             if (!res.ok) return toast(res.error, false);
             toast(`${data.item} saved`, true);
             resetForm();
             loadSummary();
           })
-          .withFailureHandler(err => {
-            $('save').disabled = false; $('save').textContent = 'Save item';
-            toast(err.message, false);
-          })
-          .addItem(data);
+          .catch(err => toast(err.message, false))
+          .finally(() => { $('save').disabled = false; $('save').textContent = 'Save item'; });
       });
 
       /* ---------- Summary + recent ---------- */
@@ -299,19 +349,51 @@
       }
 
       function loadSummary() {
-        google.script.run.withSuccessHandler(render)
-          .withFailureHandler(e => toast(e.message, false)).getRecentItems();
+        call('getRecentItems').then(render).catch(e => toast(e.message, false));
       }
 
+      /* ---------- Connection (Android app only) ---------- */
+      function showSetup() {
+        const s = settings();
+        $('api-url').value = s.url || '';
+        $('api-key').value = s.key || '';
+        $('setup').hidden = false;
+        $('app').hidden = true;
+      }
+
+      $('connect').onclick = () => {
+        const url = $('api-url').value.trim(), key = $('api-key').value.trim();
+        if (!/^https:\/\/script\.google\.com\//.test(url)) return toast('Paste the Web app URL from Apps Script', false);
+        if (!key) return toast('Paste the access key', false);
+        AndroidBridge.saveSettings(url, key);
+        $('connect').disabled = true; $('connect').textContent = 'Connecting…';
+        start().then(ok => { if (ok) toast('Connected', true); })
+          .finally(() => { $('connect').disabled = false; $('connect').textContent = 'Connect'; });
+      };
+
+      $('settings-btn').onclick = () => ($('setup').hidden ? showSetup() : start());
+
       /* ---------- Init ---------- */
+      function start() {
+        return call('getConfig').then(cfg => {
+          $('setup').hidden = true;
+          $('app').hidden = false;
+          renderChips(cfg.categories);
+          fillSelect($('unit'), cfg.units);
+          fillSelect($('location'), cfg.locations);
+          loadSummary();
+          return true;
+        }).catch(err => {
+          if (NATIVE) showSetup();
+          toast(err.message, false);
+          return false;
+        });
+      }
+
       $('today').textContent = new Date().toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
       $('date').value = localISO();
-      google.script.run.withSuccessHandler(cfg => {
-        renderChips(cfg.categories);
-        fillSelect($('unit'), cfg.units);
-        fillSelect($('location'), cfg.locations);
-        loadSummary();
-      }).withFailureHandler(e => toast(e.message, false)).getConfig();
+      $('settings-btn').hidden = !NATIVE;
+      if (NATIVE && !settings().url) showSetup(); else start();
     </script>
   </body>
 </html>

@@ -24,6 +24,18 @@ Row 2 on Stock is an example (Rice 5kg). Delete its values before you start.
 3. Click **Deploy > New deployment**, choose type **Web app**, set *Execute as: Me* and *Who has access: Only myself* (or *Anyone with Google account* for the household), then **Deploy** and approve the permissions.
 4. Open the web app URL on your phone and use **Add to Home Screen**.
 
+## Android app (APK)
+
+GitHub Actions builds the APK on every change to `android/` or `src/Index.html`, and publishes it under **Releases** (`HomeStock-v1.0.N.apk`).
+
+1. Do the Apps Script setup above. Make sure you've pasted the latest `Code.gs`.
+2. In the Apps Script editor, pick **createAccessKey** in the function menu and click **Run**. Copy the key from the Execution log.
+3. **Deploy > Manage deployments > Edit**: set *Who has access* to **Anyone**, choose *Version: New version*, then Deploy. The access key protects the data. After this, the browser link only works with `?key=YOUR_KEY` added to the end.
+4. On the phone, open the repo's **Releases** page, download the latest `.apk` and install it (allow "Install unknown apps" for your browser when asked).
+5. Open Home Stock, then paste the Web app URL and the access key, and tap **Connect**.
+
+The app shows the same screen as `src/Index.html` (bundled into the APK), and sends requests to the Apps Script `doPost` JSON API.
+
 ## Repo structure
 
 ```
@@ -32,7 +44,9 @@ Homeapp/
 ├── docs/FRAMEWORK.md        ← objective, data model, user flow, roadmap
 ├── src/                     ← Google Apps Script project
 │   ├── Config.gs            ← tab names, column positions, currency
-│   ├── Code.gs              ← addItem, getRecentItems, getConfig
+│   ├── Code.gs              ← addItem, getRecentItems, getConfig, JSON API + access key
 │   └── Index.html           ← mobile form + recent items + month total
+├── android/                 ← Android app (WebView shell + native HTTP bridge)
+├── .github/workflows/       ← builds and releases the APK
 └── tools/build_sheet.py     ← regenerates the starter spreadsheet (.xlsx)
 ```

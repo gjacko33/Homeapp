@@ -4,11 +4,72 @@
  * then Deploy > New deployment > Web app.
  */
 
-/** Serves the web app (the input form). */
-function doGet() {
+/**
+ * Web app entry point.
+ * - With ?action=... it answers as a JSON API (used by the Android app).
+ * - Otherwise it serves the HTML form. If an access key exists, the link must include ?key=YOUR_KEY.
+ */
+function doGet(e) {
+  const p = (e && e.parameter) || {};
+  if (p.action) return api_(p.action, p.key, p.data ? JSON.parse(p.data) : null);
+  if (!keyMatches_(p.key, true)) {
+    return HtmlService.createHtmlOutput(
+      '<p style="font-family:Arial;padding:24px">Not authorized. Open the link that ends with ?key=YOUR_KEY.</p>');
+  }
   return HtmlService.createHtmlOutputFromFile('Index')
     .setTitle('Home Stock')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
+
+/** JSON API for the Android app. Body: {"action": "...", "key": "...", "data": {...}} */
+function doPost(e) {
+  let body = {};
+  try { body = JSON.parse(e.postData.contents); } catch (err) { /* handled below */ }
+  return api_(body.action, body.key, body.data);
+}
+
+function api_(action, key, data) {
+  let out;
+  try {
+    if (!keyMatches_(key, false)) {
+      out = { ok: false, error: 'Wrong or missing access key. Run createAccessKey in Apps Script.' };
+    } else if (action === 'getConfig') {
+      out = { ok: true, result: getConfig() };
+    } else if (action === 'getRecentItems') {
+      out = { ok: true, result: getRecentItems() };
+    } else if (action === 'addItem') {
+      out = { ok: true, result: addItem(data || {}) };
+    } else {
+      out = { ok: false, error: 'Unknown action: ' + action };
+    }
+  } catch (err) {
+    out = { ok: false, error: String(err && err.message || err) };
+  }
+  return ContentService.createTextOutput(JSON.stringify(out))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+/**
+ * The HTML page is open when no key has been created yet (allowIfUnset = true).
+ * The JSON API always requires a key.
+ */
+function keyMatches_(key, allowIfUnset) {
+  const stored = PropertiesService.getScriptProperties().getProperty('ACCESS_KEY');
+  if (!stored) return allowIfUnset;
+  return String(key || '') === stored;
+}
+
+/**
+ * Run this once from the Apps Script editor (select it, click Run).
+ * It creates the access key for the Android app and prints it in the Execution log.
+ * Running it again replaces the key, so the old one stops working.
+ */
+function createAccessKey() {
+  const key = Utilities.getUuid().replace(/-/g, '');
+  PropertiesService.getScriptProperties().setProperty('ACCESS_KEY', key);
+  Logger.log('Access key: ' + key);
+  Logger.log('Web link for a browser: add ?key=' + key + ' to the end of your Web app URL.');
+  return key;
 }
 
 function sheet_(name) {

@@ -1,0 +1,63 @@
+plugins {
+    id 'com.android.application'
+}
+
+// CI passes -PversionCode=<run number> so every build can be installed over the last one.
+def vc = (project.findProperty('versionCode') ?: '1').toString().toInteger()
+def webAssets = layout.buildDirectory.dir('generated/webassets').get().asFile
+
+android {
+    namespace 'com.homestock.app'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.homestock.app'
+        minSdk 26
+        targetSdk 34
+        versionCode vc
+        versionName "1.0.${vc}"
+    }
+
+    // One fixed key so new versions install over old ones. Fine for a private,
+    // sideloaded app; move it to CI secrets before publishing on Google Play.
+    signingConfigs {
+        shared {
+            storeFile file('homestock.keystore')
+            storePassword 'homestock'
+            keyAlias 'homestock'
+            keyPassword 'homestock'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.shared
+        }
+        debug {
+            signingConfig signingConfigs.shared
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    sourceSets {
+        main { assets.srcDirs += [webAssets] }
+    }
+
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+    }
+}
+
+// The app screens are the same Index.html used by the Apps Script web app.
+def copyWebApp = tasks.register('copyWebApp', Copy) {
+    from rootProject.file('../src/Index.html')
+    into webAssets
+    rename { 'index.html' }
+}
+tasks.named('preBuild') { dependsOn copyWebApp }
