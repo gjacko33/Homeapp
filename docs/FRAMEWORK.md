@@ -25,7 +25,7 @@ Log what's in stock at home, and what it cost, in under 10 seconds per item. Eve
 
 ## 4. Data model (spreadsheet columns)
 
-Sheet tab: `Stock`
+Sheet tabs: `This Month` (summary by category), `Stock` (log), `Lists` (dropdown options)
 
 | # | Column | Type | Input | Example |
 |---|---|---|---|---|
@@ -35,17 +35,17 @@ Sheet tab: `Stock`
 | D | Category | list | optional | Food |
 | E | Quantity | number | optional (default 1) | 2 |
 | F | Unit | list | optional (default `pcs`) | pack |
-| G | Price (per unit) | number | **required** | 75000 |
-| H | Total | formula | auto (`E × G`) | 150000 |
+| G | Price (IDR) | number | **required** | 75000 |
+| H | Total (IDR) | formula | auto (`Quantity × Price`, blank Quantity = 1) | 150000 |
 | I | Location | list | optional | Kitchen |
 | J | Notes | text | optional | Promo at supermarket |
 
-**Default lists (editable in `Config.gs`)**
+**Default lists (editable on the `Lists` tab)**
 - Categories: Food, Drinks, Cleaning, Toiletries, Medicine, Household, Other
 - Units: pcs, pack, box, kg, g, L, ml, bottle
 - Locations: Kitchen, Fridge, Bathroom, Storage, Bedroom
 
-Currency is set in `Config.gs` (defaults to IDR).
+Currency is IDR, shown as `Rp75,000`.
 
 ## 5. User flow (Phase 1)
 
@@ -70,8 +70,11 @@ Open link → [Item name] → [Price] → (optional: qty / category / location) 
 | **3. Insights** | Monthly spend by category, price history per item | Spot where the money goes |
 | **4. Convenience** | Auto-generated shopping list, barcode scan, edit/delete from the app | Less typing |
 
-## 8. Open decisions (need your approval)
-1. **Google Sheets + Apps Script** as the stack? (recommended)
-2. Are the **columns** in section 4 right? Add or remove any?
-3. **Currency:** IDR or something else?
-4. Should **other household members** be able to add items too?
+## 8. Decisions
+| Decision | Status |
+|---|---|
+| Stack: Google Sheets + Apps Script | Approved |
+| Columns as in section 4 | Approved |
+| Currency: IDR | Approved |
+| Monthly spend by category on a "This Month" tab | Added in Phase 1 |
+| Household access | Open: set in the web app deployment ("Who has access") |

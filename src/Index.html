@@ -2,34 +2,147 @@
 <html>
   <head>
     <base target="_top">
-    <!-- FRAMEWORK STUB: styling and logic come in Phase 1 -->
+    <meta charset="utf-8">
+    <style>
+      :root {
+        --ink: #1F3A5F; --muted: #6B7785; --line: #E3E8EE;
+        --bg: #F6F8FA; --card: #FFFFFF; --ok: #1E7F4F; --err: #B42318;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; font-family: Arial, Helvetica, sans-serif; background: var(--bg); color: var(--ink); }
+      main { max-width: 480px; margin: 0 auto; padding: 16px; }
+      h1 { font-size: 22px; margin: 8px 0 16px; }
+      .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+      label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 4px; }
+      input, select, textarea {
+        width: 100%; font: inherit; font-size: 16px; padding: 12px;
+        border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink);
+      }
+      input:focus, select:focus, textarea:focus { outline: 2px solid var(--ink); border-color: var(--ink); }
+      .row { display: flex; gap: 8px; } .row > div { flex: 1; }
+      details { margin-top: 12px; } summary { cursor: pointer; color: var(--muted); font-size: 14px; }
+      button {
+        width: 100%; margin-top: 16px; padding: 14px; font-size: 16px; font-weight: bold;
+        color: #fff; background: var(--ink); border: 0; border-radius: 8px; cursor: pointer;
+      }
+      button:disabled { opacity: .6; }
+      .total { display: flex; justify-content: space-between; align-items: baseline; }
+      .total strong { font-size: 22px; }
+      ul { list-style: none; margin: 0; padding: 0; }
+      li { display: flex; justify-content: space-between; gap: 8px; padding: 10px 0; border-top: 1px solid var(--line); }
+      li:first-child { border-top: 0; }
+      .meta { font-size: 12px; color: var(--muted); }
+      .empty { color: var(--muted); font-size: 14px; }
+      #toast {
+        position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+        padding: 12px 18px; border-radius: 8px; color: #fff; font-size: 14px; display: none;
+      }
+    </style>
   </head>
   <body>
     <main>
       <h1>Home Stock</h1>
 
-      <!-- 1. Add Item form -->
-      <form id="add-form">
-        <input id="item" placeholder="Item name" required>
-        <input id="price" type="number" inputmode="decimal" placeholder="Price" required>
+      <form id="add-form" class="card" autocomplete="off">
+        <label for="item">Item</label>
+        <input id="item" name="item" placeholder="e.g. Rice 5kg" required>
+
+        <label for="price">Price per unit (IDR)</label>
+        <input id="price" name="price" type="number" inputmode="numeric" min="0" step="any" placeholder="75000" required>
 
         <details>
           <summary>More details</summary>
-          <!-- quantity, unit, category, location, notes -->
+          <div class="row">
+            <div><label for="quantity">Quantity</label><input id="quantity" name="quantity" type="number" inputmode="decimal" min="0" step="any" placeholder="1"></div>
+            <div><label for="unit">Unit</label><select id="unit" name="unit"><option value=""></option></select></div>
+          </div>
+          <div class="row">
+            <div><label for="category">Category</label><select id="category" name="category"><option value=""></option></select></div>
+            <div><label for="location">Location</label><select id="location" name="location"><option value=""></option></select></div>
+          </div>
+          <label for="date">Date</label>
+          <input id="date" name="date" type="date">
+          <label for="notes">Notes</label>
+          <textarea id="notes" name="notes" rows="2"></textarea>
         </details>
 
-        <button type="submit">Save</button>
+        <button id="save" type="submit">Save</button>
       </form>
 
-      <!-- 2. Recent items + total -->
-      <section id="recent"></section>
+      <section class="card">
+        <div class="total"><span id="month" class="meta">This month</span><strong id="month-total">-</strong></div>
+      </section>
+
+      <section class="card">
+        <ul id="recent"><li class="empty">Loading…</li></ul>
+      </section>
     </main>
 
+    <div id="toast"></div>
+
     <script>
-      // TODO(Phase 1):
-      // - load dropdowns via google.script.run.getConfig()
-      // - on submit → google.script.run.addItem(data) → toast + clear form
-      // - render google.script.run.getRecentItems()
+      const $ = id => document.getElementById(id);
+      const today = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+
+      function fill(select, values) {
+        values.forEach(v => select.add(new Option(v, v)));
+      }
+
+      function toast(msg, ok) {
+        const t = $('toast');
+        t.textContent = msg;
+        t.style.background = ok ? 'var(--ok)' : 'var(--err)';
+        t.style.display = 'block';
+        clearTimeout(t._h);
+        t._h = setTimeout(() => (t.style.display = 'none'), 2500);
+      }
+
+      function esc(s) {
+        return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      }
+
+      function renderRecent(data) {
+        $('month').textContent = 'Spent in ' + data.month;
+        $('month-total').textContent = data.monthTotal;
+        $('recent').innerHTML = data.items.length
+          ? data.items.map(i => `
+              <li>
+                <div>${esc(i.item)}<div class="meta">${esc(i.date)}${i.category ? ' · ' + esc(i.category) : ''}${i.quantity ? ' · ' + esc(i.quantity) + ' ' + esc(i.unit) : ''}</div></div>
+                <strong>${esc(i.total)}</strong>
+              </li>`).join('')
+          : '<li class="empty">No items yet.</li>';
+      }
+
+      function loadRecent() {
+        google.script.run.withSuccessHandler(renderRecent)
+          .withFailureHandler(e => toast(e.message, false)).getRecentItems();
+      }
+
+      $('date').value = today();
+
+      google.script.run.withSuccessHandler(cfg => {
+        fill($('category'), cfg.categories);
+        fill($('unit'), cfg.units);
+        fill($('location'), cfg.locations);
+      }).getConfig();
+      loadRecent();
+
+      $('add-form').addEventListener('submit', e => {
+        e.preventDefault();
+        const data = Object.fromEntries(new FormData(e.target));
+        $('save').disabled = true;
+        google.script.run
+          .withSuccessHandler(res => {
+            $('save').disabled = false;
+            if (!res.ok) return toast(res.error, false);
+            toast('Saved ' + res.id, true);
+            ['item', 'price', 'quantity', 'notes'].forEach(id => ($(id).value = ''));
+            $('item').focus();
+            loadRecent();
+          })
+          .withFailureHandler(err => { $('save').disabled = false; toast(err.message, false); })
+          .addItem(data);
+      });
     </script>
   </body>
 </html>
