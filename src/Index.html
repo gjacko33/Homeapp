@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <!-- FRAMEWORK STUB: styling and logic come in Phase 1 -->
+  </head>
+  <body>
+    <main>
+      <h1>Home Stock</h1>
+
+      <!-- 1. Add Item form -->
+      <form id="add-form">
+        <input id="item" placeholder="Item name" required>
+        <input id="price" type="number" inputmode="decimal" placeholder="Price" required>
+
+        <details>
+          <summary>More details</summary>
+          <!-- quantity, unit, category, location, notes -->
+        </details>
+
+        <button type="submit">Save</button>
+      </form>
+
+      <!-- 2. Recent items + total -->
+      <section id="recent"></section>
+    </main>
+
+    <script>
+      // TODO(Phase 1):
+      // - load dropdowns via google.script.run.getConfig()
+      // - on submit → google.script.run.addItem(data) → toast + clear form
+      // - render google.script.run.getRecentItems()
+    </script>
+  </body>
+</html>
