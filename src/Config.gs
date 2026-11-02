@@ -25,5 +25,7 @@ const CONFIG = {
 
   // "This Month" tab cells read by the app.
   SUMMARY_MONTH_CELL: 'B4',
+  SUMMARY_CATEGORY_RANGE: 'A8:C15', // Category, Items, Spend (incl. Uncategorized)
+  SUMMARY_COUNT_CELL: 'B16',
   SUMMARY_TOTAL_CELL: 'C16',
 };

@@ -98,7 +98,7 @@ function addItem(data) {
   }
 }
 
-/** Most recent items (newest first) plus this month's total spend. */
+/** Most recent items (newest first) plus this month's totals by category. */
 function getRecentItems() {
   const sh = sheet_(CONFIG.SHEETS.STOCK);
   const last = sh.getLastRow();
@@ -115,9 +115,21 @@ function getRecentItems() {
     }));
 
   const summary = sheet_(CONFIG.SHEETS.SUMMARY);
+  const catRange = summary.getRange(CONFIG.SUMMARY_CATEGORY_RANGE);
+  const catDisplay = catRange.getDisplayValues();
+  const categories = catRange.getValues()
+    .map((r, i) => ({
+      name: String(r[0]), items: Number(r[1]) || 0,
+      spend: Number(r[2]) || 0, spendText: catDisplay[i][2],
+    }))
+    .filter(c => c.spend > 0)
+    .sort((a, b) => b.spend - a.spend);
+
   return {
     items,
+    categories,
     month: summary.getRange(CONFIG.SUMMARY_MONTH_CELL).getDisplayValue(),
+    monthItems: summary.getRange(CONFIG.SUMMARY_COUNT_CELL).getDisplayValue(),
     monthTotal: summary.getRange(CONFIG.SUMMARY_TOTAL_CELL).getDisplayValue(),
   };
 }
