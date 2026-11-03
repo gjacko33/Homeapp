@@ -8,6 +8,9 @@ const CONFIG = {
   ID_PREFIX: 'ITM-',
   RECENT_LIMIT: 10,
 
+  // People who use the app. Each item records who added it.
+  USERS: ['Gilang', 'Lia'],
+
   SHEETS: {
     STOCK: 'Stock',
     LISTS: 'Lists',
@@ -17,7 +20,7 @@ const CONFIG = {
   // Stock tab column positions (1-based). Must match the header row.
   COL: {
     ID: 1, DATE: 2, ITEM: 3, CATEGORY: 4, QTY: 5,
-    UNIT: 6, PRICE: 7, TOTAL: 8, LOCATION: 9, NOTES: 10,
+    UNIT: 6, PRICE: 7, TOTAL: 8, LOCATION: 9, NOTES: 10, ADDED_BY: 11,
   },
 
   // Lists tab columns (1-based), data starts on row 2.

@@ -104,7 +104,26 @@ function getConfig() {
     categories: readList_(CONFIG.LIST_COL.CATEGORY),
     units: readList_(CONFIG.LIST_COL.UNIT),
     locations: readList_(CONFIG.LIST_COL.LOCATION),
+    users: CONFIG.USERS,
   };
+}
+
+/**
+ * Adds the "Added By" column to the Stock tab the first time it is needed.
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sh
+ */
+function ensureAddedByColumn_(sh) {
+  const col = CONFIG.COL.ADDED_BY;
+  if (sh.getMaxColumns() < col) sh.insertColumnsAfter(sh.getMaxColumns(), col - sh.getMaxColumns());
+  const head = sh.getRange(1, col);
+  if (String(head.getValue()).trim() !== '') return;
+  head.setValue('Added By');
+  sh.getRange(1, CONFIG.COL.ITEM).copyFormatToRange(sh, col, col, 1, 1);
+  sh.setColumnWidth(col, 110);
+  if (sh.getMaxRows() > 1) {
+    sh.getRange(2, col, sh.getMaxRows() - 1, 1).setDataValidation(
+      SpreadsheetApp.newDataValidation().requireValueInList(CONFIG.USERS, true).setAllowInvalid(true).build());
+  }
 }
 
 /** First row (from 2) whose Item cell is empty. Prefilled formula rows count as empty. */
@@ -126,7 +145,7 @@ function parseDate_(s) {
 /**
  * Adds one item as a new row on the Stock tab.
  * @param {{item:string, price:number|string, date?:string, quantity?:number|string,
- *          category?:string, unit?:string, location?:string, notes?:string}} data
+ *          category?:string, unit?:string, location?:string, notes?:string, addedBy?:string}} data
  * @return {{ok:boolean, id?:string, row?:number, error?:string}}
  */
 function addItem(data) {
@@ -141,10 +160,16 @@ function addItem(data) {
     return { ok: false, error: 'Quantity must be more than 0.' };
   }
 
+  const addedBy = String(data.addedBy || '').trim();
+  if (addedBy && CONFIG.USERS.indexOf(addedBy) < 0) {
+    return { ok: false, error: 'Unknown user: ' + addedBy };
+  }
+
   const lock = LockService.getDocumentLock();
   lock.waitLock(10000);
   try {
     const sh = sheet_(CONFIG.SHEETS.STOCK);
+    ensureAddedByColumn_(sh);
     const r = nextEmptyRow_(sh);
     const C = CONFIG.COL;
 
@@ -152,8 +177,8 @@ function addItem(data) {
     sh.getRange(r, C.DATE, 1, 6).setValues([[
       parseDate_(data.date), item, data.category || '', qty, data.unit || '', price,
     ]]);
-    // I..J: Location, Notes
-    sh.getRange(r, C.LOCATION, 1, 2).setValues([[data.location || '', data.notes || '']]);
+    // I..K: Location, Notes, Added By
+    sh.getRange(r, C.LOCATION, 1, 3).setValues([[data.location || '', data.notes || '', addedBy]]);
     // ID and Total formulas (rows past the prefilled block need them too)
     sh.getRange(r, C.ID).setFormula(
       `=IF(C${r}="","","${CONFIG.ID_PREFIX}"&TEXT(ROW()-1,"0000"))`);
@@ -168,12 +193,17 @@ function addItem(data) {
   }
 }
 
-/** Most recent items (newest first) plus this month's totals by category. */
+/** Most recent items (newest first), this month's totals by category and by person. */
 function getRecentItems() {
   const sh = sheet_(CONFIG.SHEETS.STOCK);
-  const last = sh.getLastRow();
-  const rows = last < 2 ? [] : sh.getRange(2, 1, last - 1, 10).getDisplayValues();
+  ensureAddedByColumn_(sh);
   const C = CONFIG.COL;
+  const width = C.ADDED_BY;
+  const last = sh.getLastRow();
+  const range = last < 2 ? null : sh.getRange(2, 1, last - 1, width);
+  const rows = range ? range.getDisplayValues() : [];
+  const raw = range ? range.getValues() : [];
+
   const items = rows
     .filter(r => r[C.ITEM - 1].trim() !== '')
     .slice(-CONFIG.RECENT_LIMIT)
@@ -181,7 +211,7 @@ function getRecentItems() {
     .map(r => ({
       id: r[C.ID - 1], date: r[C.DATE - 1], item: r[C.ITEM - 1],
       category: r[C.CATEGORY - 1], quantity: r[C.QTY - 1], unit: r[C.UNIT - 1],
-      total: r[C.TOTAL - 1], location: r[C.LOCATION - 1],
+      total: r[C.TOTAL - 1], location: r[C.LOCATION - 1], addedBy: r[C.ADDED_BY - 1],
     }));
 
   const summary = sheet_(CONFIG.SHEETS.SUMMARY);
@@ -195,9 +225,26 @@ function getRecentItems() {
     .filter(c => c.spend > 0)
     .sort((a, b) => b.spend - a.spend);
 
+  // Spend per person for the month shown on the This Month tab.
+  const start = summary.getRange(CONFIG.SUMMARY_MONTH_CELL).getValue();
+  const people = CONFIG.USERS.map(name => ({ name, spend: 0, items: 0 }));
+  if (start instanceof Date) {
+    const end = new Date(start.getFullYear(), start.getMonth() + 1, 1);
+    raw.forEach(r => {
+      const d = r[C.DATE - 1];
+      if (!String(r[C.ITEM - 1]).trim() || !(d instanceof Date) || d < start || d >= end) return;
+      const who = String(r[C.ADDED_BY - 1] || '').trim() || 'Not set';
+      let p = people.find(x => x.name === who);
+      if (!p) { p = { name: who, spend: 0, items: 0 }; people.push(p); }
+      p.spend += Number(r[C.TOTAL - 1]) || 0;
+      p.items += 1;
+    });
+  }
+
   return {
     items,
     categories,
+    people,
     month: summary.getRange(CONFIG.SUMMARY_MONTH_CELL).getDisplayValue(),
     monthItems: summary.getRange(CONFIG.SUMMARY_COUNT_CELL).getDisplayValue(),
     monthTotal: summary.getRange(CONFIG.SUMMARY_TOTAL_CELL).getDisplayValue(),
@@ -218,6 +265,8 @@ const STYLE = {
     ['#E3ECFB', '#1F55B8'], ['#DDF3F0', '#0B7A6D'], ['#FBE3E4', '#B42328'], ['#FDF1DC', '#9A5B00'],
     ['#EEE3F6', '#6B35A0'], ['#D9EEFF', '#0066B3'], ['#ECECEF', '#5B5D68'],
   ],
+  // Person tag colours (background, text), matching the app.
+  people: [['#EEEBFE', '#5B4BD6'], ['#FDE4EF', '#B4235F'], ['#DDF3F0', '#0B7A6D'], ['#FDF1DC', '#9A5B00']],
 };
 
 /**
@@ -229,6 +278,7 @@ function tidyUpSheets() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const categories = readList_(CONFIG.LIST_COL.CATEGORY);
   styleSummary_(sheet_(CONFIG.SHEETS.SUMMARY));
+  ensureAddedByColumn_(sheet_(CONFIG.SHEETS.STOCK));
   styleStock_(sheet_(CONFIG.SHEETS.STOCK), categories);
   styleLists_(sheet_(CONFIG.SHEETS.LISTS));
   ss.setActiveSheet(sheet_(CONFIG.SHEETS.SUMMARY));
@@ -329,10 +379,11 @@ function styleStock_(sh, categories) {
   const C = CONFIG.COL;
   sh.setHiddenGridlines(true);
   sh.setTabColor('#12A594');
-  if (sh.getMaxColumns() > 10) sh.deleteColumns(11, sh.getMaxColumns() - 10);
+  const cols = C.ADDED_BY;
+  if (sh.getMaxColumns() > cols) sh.deleteColumns(cols + 1, sh.getMaxColumns() - cols);
 
   const rows = sh.getMaxRows();
-  const all = sh.getRange(1, 1, rows, 10);
+  const all = sh.getRange(1, 1, rows, cols);
   all.setFontFamily(STYLE.font).setFontSize(10).setFontColor(STYLE.ink).setVerticalAlignment('middle');
 
   // Alternating rows that extend to every row, including new ones.
@@ -343,7 +394,7 @@ function styleStock_(sh, categories) {
     .setSecondRowColor(STYLE.band);
 
   // Header: grey marks the columns that calculate automatically.
-  sh.getRange(1, 1, 1, 10)
+  sh.getRange(1, 1, 1, cols)
     .setBackground(STYLE.navy).setFontColor('#FFFFFF').setFontWeight('bold')
     .setHorizontalAlignment('center').setWrap(true);
   sh.getRange(1, C.ID).setBackground(STYLE.grey);
@@ -352,7 +403,7 @@ function styleStock_(sh, categories) {
   if (rows > 1) sh.setRowHeights(2, rows - 1, 28);
   sh.setFrozenRows(1);
 
-  const widths = { ID: 90, DATE: 110, ITEM: 230, CATEGORY: 120, QTY: 80, UNIT: 70, PRICE: 120, TOTAL: 130, LOCATION: 110, NOTES: 260 };
+  const widths = { ID: 90, DATE: 110, ITEM: 230, CATEGORY: 120, QTY: 80, UNIT: 70, PRICE: 120, TOTAL: 130, LOCATION: 110, NOTES: 260, ADDED_BY: 110 };
   Object.keys(widths).forEach(k => sh.setColumnWidth(C[k], widths[k]));
 
   if (rows > 1) {
@@ -367,21 +418,31 @@ function styleStock_(sh, categories) {
     col(C.TOTAL).setHorizontalAlignment('right').setNumberFormat(STYLE.idr).setFontWeight('bold');
     col(C.LOCATION).setHorizontalAlignment('center');
     col(C.NOTES).setHorizontalAlignment('left').setFontColor(STYLE.muted);
+    col(C.ADDED_BY).setHorizontalAlignment('center');
 
     // Coloured category tags, same colours as the app.
     const catRange = col(C.CATEGORY);
     const others = sh.getConditionalFormatRules().filter(rule =>
-      !rule.getRanges().some(r => r.getColumn() === C.CATEGORY));
+      !rule.getRanges().some(r => r.getColumn() === C.CATEGORY || r.getColumn() === C.ADDED_BY));
     const tagRules = categories.map((name, i) => {
       const [bg, fg] = STYLE.tags[i % STYLE.tags.length];
       return SpreadsheetApp.newConditionalFormatRule()
         .whenTextEqualTo(name).setBackground(bg).setFontColor(fg).setBold(true)
         .setRanges([catRange]).build();
     });
-    sh.setConditionalFormatRules(others.concat(tagRules));
+    const whoRange = col(C.ADDED_BY);
+    const personRules = CONFIG.USERS.map((name, i) => {
+      const [bg, fg] = STYLE.people[i % STYLE.people.length];
+      return SpreadsheetApp.newConditionalFormatRule()
+        .whenTextEqualTo(name).setBackground(bg).setFontColor(fg).setBold(true)
+        .setRanges([whoRange]).build();
+    });
+    sh.setConditionalFormatRules(others.concat(tagRules, personRules));
   }
 
-  if (!sh.getFilter()) sh.getRange(1, 1, rows, 10).createFilter();
+  const filter = sh.getFilter();
+  if (filter && filter.getRange().getNumColumns() < cols) filter.remove();
+  if (!sh.getFilter()) sh.getRange(1, 1, rows, cols).createFilter();
 }
 
 /** @param {GoogleAppsScript.Spreadsheet.Sheet} sh */
