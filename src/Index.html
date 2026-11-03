@@ -291,7 +291,7 @@
             finish();
             rej(new Error('The script answered, but in the old format. Paste the latest Code.gs, then Deploy > Manage deployments > Edit > Version: "New version" > Deploy.'));
           }, 50);
-          tag.onerror = () => { if (done) return; finish(); rej(new Error('Could not reach the script. Check that the URL ends with /exec and "Who has access" is "Anyone", then deploy a "New version".')); };
+          tag.onerror = () => { if (done) return; finish(); rej(new Error('Could not load the reply. Usually the latest Code.gs is not live yet: paste it, then Deploy > Manage deployments > Edit > Version: "New version" > Deploy. Also check the URL ends with /exec and "Who has access" is "Anyone".')); };
           const timer = setTimeout(() => { if (done) return; finish(); rej(new Error('The script took too long to answer. Try again.')); }, 25000);
           tag.src = url + (url.includes('?') ? '&' : '?') + qs + '&callback=' + cb;
           document.head.appendChild(tag);
