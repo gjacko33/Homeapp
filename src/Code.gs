@@ -80,6 +80,7 @@ function createAccessKey() {
   return key;
 }
 
+/** @return {GoogleAppsScript.Spreadsheet.Sheet} */
 function sheet_(name) {
   const sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(name);
   if (!sh) throw new Error('Missing tab: ' + name);
@@ -201,4 +202,203 @@ function getRecentItems() {
     monthItems: summary.getRange(CONFIG.SUMMARY_COUNT_CELL).getDisplayValue(),
     monthTotal: summary.getRange(CONFIG.SUMMARY_TOTAL_CELL).getDisplayValue(),
   };
+}
+
+/* ======================================================================
+ * Sheet styling
+ * ==================================================================== */
+
+const STYLE = {
+  font: 'Arial',
+  navy: '#1F3A5F', grey: '#7F8C8D', ink: '#14243A', muted: '#6B7785',
+  band: '#F5F7FA', line: '#E1E6ED', total: '#E8EEF4', input: '#FFF4CC', inputLine: '#E6C35C',
+  idr: '"Rp"#,##0;-"Rp"#,##0;"-"',
+  // Category tag colours (background, text), matching the app.
+  tags: [
+    ['#E3ECFB', '#1F55B8'], ['#DDF3F0', '#0B7A6D'], ['#FBE3E4', '#B42328'], ['#FDF1DC', '#9A5B00'],
+    ['#EEE3F6', '#6B35A0'], ['#D9EEFF', '#0066B3'], ['#ECECEF', '#5B5D68'],
+  ],
+};
+
+/**
+ * Run once from the Apps Script editor (select it, click Run) to tidy up all tabs.
+ * Only formatting changes. Data, formulas and cell positions stay the same,
+ * so the app keeps working. Safe to run again at any time.
+ */
+function tidyUpSheets() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const categories = readList_(CONFIG.LIST_COL.CATEGORY);
+  styleSummary_(sheet_(CONFIG.SHEETS.SUMMARY));
+  styleStock_(sheet_(CONFIG.SHEETS.STOCK), categories);
+  styleLists_(sheet_(CONFIG.SHEETS.LISTS));
+  ss.setActiveSheet(sheet_(CONFIG.SHEETS.SUMMARY));
+  SpreadsheetApp.flush();
+}
+
+/** @param {GoogleAppsScript.Spreadsheet.Sheet} sh */
+function styleSummary_(sh) {
+  sh.setHiddenGridlines(true);
+  sh.setTabColor(STYLE.navy);
+
+  // Trim the empty grid so the page reads as one dashboard.
+  if (sh.getMaxColumns() > 14) sh.deleteColumns(15, sh.getMaxColumns() - 14);
+  if (sh.getMaxRows() > 30) sh.deleteRows(31, sh.getMaxRows() - 30);
+
+  sh.getRange(1, 1, sh.getMaxRows(), sh.getMaxColumns())
+    .setFontFamily(STYLE.font).setFontColor(STYLE.ink).setVerticalAlignment('middle');
+
+  sh.setColumnWidth(1, 180);
+  sh.setColumnWidth(2, 150);
+  sh.setColumnWidth(3, 150);
+  sh.setColumnWidth(4, 130);
+  sh.setColumnWidth(5, 32);
+  sh.setColumnWidths(6, 9, 80);
+
+  sh.setRowHeight(1, 46);
+  sh.setRowHeight(2, 22);
+  sh.setRowHeight(3, 14);
+  sh.setRowHeights(4, 2, 30);
+  sh.setRowHeight(6, 14);
+  sh.setRowHeight(7, 34);
+  sh.setRowHeights(8, 8, 30);
+  sh.setRowHeight(16, 36);
+
+  // Title and note
+  sh.getRange('A1').setFontSize(20).setFontWeight('bold').setFontColor(STYLE.navy);
+  sh.getRange('A2').setFontSize(10).setFontStyle('italic').setFontColor(STYLE.muted);
+
+  // Month selector
+  sh.getRange('A4:A5').setFontColor(STYLE.muted).setFontSize(10);
+  sh.getRange('A4').setFontWeight('bold');
+  sh.getRange('B4')
+    .setNumberFormat('mmmm yyyy').setFontSize(12).setFontWeight('bold')
+    .setHorizontalAlignment('left').setBackground(STYLE.input)
+    .setBorder(true, true, true, true, null, null, STYLE.inputLine, SpreadsheetApp.BorderStyle.SOLID);
+  sh.getRange('B5').setNumberFormat('dd mmm yyyy').setHorizontalAlignment('left').setFontColor(STYLE.muted);
+
+  // Table header
+  sh.getRange('A7:D7')
+    .setBackground(STYLE.navy).setFontColor('#FFFFFF').setFontWeight('bold').setFontSize(11)
+    .setHorizontalAlignment('center');
+  sh.getRange('A7').setHorizontalAlignment('left');
+
+  // Table body: banded rows with thin separators
+  sh.getRange('A8:D15').setFontSize(11).setFontWeight('normal').setFontStyle('normal')
+    .setBorder(null, null, true, null, null, true, STYLE.line, SpreadsheetApp.BorderStyle.SOLID);
+  for (let r = 8; r <= 15; r++) {
+    sh.getRange(r, 1, 1, 4).setBackground(r % 2 === 0 ? '#FFFFFF' : STYLE.band);
+  }
+  sh.getRange('A15:D15').setFontStyle('italic').setFontColor(STYLE.muted);
+  sh.getRange('A8:A16').setHorizontalAlignment('left');
+  sh.getRange('B8:B16').setHorizontalAlignment('center');
+  sh.getRange('C8:D16').setHorizontalAlignment('right');
+
+  // Total row
+  sh.getRange('A16:D16')
+    .setBackground(STYLE.total).setFontWeight('bold').setFontSize(12).setFontColor(STYLE.navy)
+    .setBorder(true, null, true, null, null, null, STYLE.navy, SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
+
+  // Chart: rebuilt so it is aligned and styled like the table
+  sh.getCharts().forEach(c => sh.removeChart(c));
+  const chart = sh.newChart()
+    .setChartType(Charts.ChartType.BAR)
+    .addRange(sh.getRange('A7:A15'))
+    .addRange(sh.getRange('C7:C15'))
+    .setNumHeaders(1)
+    .setPosition(4, 6, 0, 0)
+    .setOption('title', 'Spend by category')
+    .setOption('titleTextStyle', { color: STYLE.ink, fontSize: 14, bold: true })
+    .setOption('legend', { position: 'none' })
+    .setOption('colors', [STYLE.navy])
+    .setOption('bar', { groupWidth: '60%' })
+    .setOption('hAxis', { format: 'short', gridlines: { color: STYLE.line }, textStyle: { color: STYLE.muted } })
+    .setOption('vAxis', { textStyle: { color: STYLE.ink } })
+    .setOption('chartArea', { left: 110, top: 50, width: '72%', height: '78%' })
+    .setOption('backgroundColor', '#FFFFFF')
+    .setOption('width', 620)
+    .setOption('height', 390)
+    .build();
+  sh.insertChart(chart);
+}
+
+/**
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sh
+ * @param {string[]} categories
+ */
+function styleStock_(sh, categories) {
+  const C = CONFIG.COL;
+  sh.setHiddenGridlines(true);
+  sh.setTabColor('#12A594');
+  if (sh.getMaxColumns() > 10) sh.deleteColumns(11, sh.getMaxColumns() - 10);
+
+  const rows = sh.getMaxRows();
+  const all = sh.getRange(1, 1, rows, 10);
+  all.setFontFamily(STYLE.font).setFontSize(10).setFontColor(STYLE.ink).setVerticalAlignment('middle');
+
+  // Alternating rows that extend to every row, including new ones.
+  sh.getBandings().forEach(b => b.remove());
+  all.applyRowBanding(SpreadsheetApp.BandingTheme.LIGHT_GREY, true, false)
+    .setHeaderRowColor(STYLE.navy)
+    .setFirstRowColor('#FFFFFF')
+    .setSecondRowColor(STYLE.band);
+
+  // Header: grey marks the columns that calculate automatically.
+  sh.getRange(1, 1, 1, 10)
+    .setBackground(STYLE.navy).setFontColor('#FFFFFF').setFontWeight('bold')
+    .setHorizontalAlignment('center').setWrap(true);
+  sh.getRange(1, C.ID).setBackground(STYLE.grey);
+  sh.getRange(1, C.TOTAL).setBackground(STYLE.grey);
+  sh.setRowHeight(1, 36);
+  if (rows > 1) sh.setRowHeights(2, rows - 1, 28);
+  sh.setFrozenRows(1);
+
+  const widths = { ID: 90, DATE: 110, ITEM: 230, CATEGORY: 120, QTY: 80, UNIT: 70, PRICE: 120, TOTAL: 130, LOCATION: 110, NOTES: 260 };
+  Object.keys(widths).forEach(k => sh.setColumnWidth(C[k], widths[k]));
+
+  if (rows > 1) {
+    const col = c => sh.getRange(2, c, rows - 1, 1);
+    col(C.ID).setHorizontalAlignment('center').setFontColor(STYLE.muted);
+    col(C.DATE).setHorizontalAlignment('center').setNumberFormat('dd mmm yyyy');
+    col(C.ITEM).setHorizontalAlignment('left');
+    col(C.CATEGORY).setHorizontalAlignment('center');
+    col(C.QTY).setHorizontalAlignment('center');
+    col(C.UNIT).setHorizontalAlignment('center');
+    col(C.PRICE).setHorizontalAlignment('right').setNumberFormat(STYLE.idr);
+    col(C.TOTAL).setHorizontalAlignment('right').setNumberFormat(STYLE.idr).setFontWeight('bold');
+    col(C.LOCATION).setHorizontalAlignment('center');
+    col(C.NOTES).setHorizontalAlignment('left').setFontColor(STYLE.muted);
+
+    // Coloured category tags, same colours as the app.
+    const catRange = col(C.CATEGORY);
+    const others = sh.getConditionalFormatRules().filter(rule =>
+      !rule.getRanges().some(r => r.getColumn() === C.CATEGORY));
+    const tagRules = categories.map((name, i) => {
+      const [bg, fg] = STYLE.tags[i % STYLE.tags.length];
+      return SpreadsheetApp.newConditionalFormatRule()
+        .whenTextEqualTo(name).setBackground(bg).setFontColor(fg).setBold(true)
+        .setRanges([catRange]).build();
+    });
+    sh.setConditionalFormatRules(others.concat(tagRules));
+  }
+
+  if (!sh.getFilter()) sh.getRange(1, 1, rows, 10).createFilter();
+}
+
+/** @param {GoogleAppsScript.Spreadsheet.Sheet} sh */
+function styleLists_(sh) {
+  sh.setHiddenGridlines(true);
+  sh.setTabColor(STYLE.grey);
+  const rows = sh.getMaxRows();
+  sh.getRange(1, 1, rows, sh.getMaxColumns()).setFontFamily(STYLE.font).setFontSize(10)
+    .setFontColor(STYLE.ink).setVerticalAlignment('middle');
+  sh.getRange('A1:C1').setBackground(STYLE.navy).setFontColor('#FFFFFF').setFontWeight('bold')
+    .setHorizontalAlignment('center');
+  sh.getRange('A2:C30').setHorizontalAlignment('center')
+    .setBorder(null, null, null, null, true, true, STYLE.line, SpreadsheetApp.BorderStyle.SOLID);
+  sh.getRange('E1').setFontStyle('italic').setFontColor(STYLE.muted);
+  sh.setColumnWidths(1, 3, 150);
+  sh.setColumnWidth(4, 24);
+  sh.setRowHeight(1, 32);
+  if (rows > 1) sh.setRowHeights(2, rows - 1, 26);
+  sh.setFrozenRows(1);
 }
