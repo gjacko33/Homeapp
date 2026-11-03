@@ -263,26 +263,48 @@
         return 'Got a web page instead of data. Check that the URL ends with /exec and that you deployed a "New version".';
       }
 
+      /** Android app: POST through the native bridge. */
       function send(url, body) {
-        if (MODE === 'native') {
-          const id = String(++seq);
-          return new Promise((res, rej) => { pending[id] = { res, rej }; AndroidBridge.request(id, url, body); });
-        }
-        return fetch(url, { method: 'POST', body }).then(r => r.text()).catch(() => {
-          throw new Error('Could not reach the script. Most likely "Who has access" is not "Anyone" yet, or the URL is wrong. Check both, deploy a "New version", then try again.');
+        const id = String(++seq);
+        return new Promise((res, rej) => { pending[id] = { res, rej }; AndroidBridge.request(id, url, body); })
+          .then(text => {
+            try { return JSON.parse(text); } catch (e) {
+              const err = new Error(explain(text));
+              err.raw = String(text).slice(0, 400);
+              throw err;
+            }
+          });
+      }
+
+      /** Browser file: JSONP (a script tag), which Chrome allows from pages opened from disk. */
+      function jsonp(url, params) {
+        return new Promise((res, rej) => {
+          const cb = '__hs' + Date.now() + (++seq);
+          const qs = Object.keys(params).filter(k => params[k] != null)
+            .map(k => encodeURIComponent(k) + '=' + encodeURIComponent(params[k])).join('&');
+          const tag = document.createElement('script');
+          let done = false;
+          const finish = () => { done = true; clearTimeout(timer); delete window[cb]; tag.remove(); };
+          window[cb] = out => { finish(); res(out); };
+          tag.onload = () => setTimeout(() => {
+            if (done) return;
+            finish();
+            rej(new Error('The script answered, but in the old format. Paste the latest Code.gs, then Deploy > Manage deployments > Edit > Version: "New version" > Deploy.'));
+          }, 50);
+          tag.onerror = () => { if (done) return; finish(); rej(new Error('Could not reach the script. Check that the URL ends with /exec and "Who has access" is "Anyone", then deploy a "New version".')); };
+          const timer = setTimeout(() => { if (done) return; finish(); rej(new Error('The script took too long to answer. Try again.')); }, 25000);
+          tag.src = url + (url.includes('?') ? '&' : '?') + qs + '&callback=' + cb;
+          document.head.appendChild(tag);
         });
       }
 
       function apiCall(action, data) {
         const s = currentSettings();
         if (!s.url) return Promise.reject(new Error('Not connected yet'));
-        return send(s.url, JSON.stringify({ action, key: s.key, data })).then(text => {
-          let out;
-          try { out = JSON.parse(text); } catch (e) {
-            const err = new Error(explain(text));
-            err.raw = String(text).slice(0, 400);
-            throw err;
-          }
+        const reply = MODE === 'native'
+          ? send(s.url, JSON.stringify({ action, key: s.key, data }))
+          : jsonp(s.url, { action, key: s.key, data: data === undefined ? null : JSON.stringify(data) });
+        return reply.then(out => {
           if (!out.ok) throw new Error(out.error || 'Request failed');
           return out.result;
         });

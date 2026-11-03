@@ -11,7 +11,7 @@
  */
 function doGet(e) {
   const p = (e && e.parameter) || {};
-  if (p.action) return api_(p.action, p.key, p.data ? JSON.parse(p.data) : null);
+  if (p.action) return api_(p.action, p.key, p.data ? JSON.parse(p.data) : null, p.callback);
   if (!keyMatches_(p.key, true)) {
     return HtmlService.createHtmlOutput(
       '<p style="font-family:Arial;padding:24px">Not authorized. Open the link that ends with ?key=YOUR_KEY.</p>');
@@ -28,7 +28,11 @@ function doPost(e) {
   return api_(body.action, body.key, body.data);
 }
 
-function api_(action, key, data) {
+/**
+ * Runs one API action. With a callback name (browser file using JSONP) the JSON is
+ * wrapped as callback(...), which works from pages opened straight from disk.
+ */
+function api_(action, key, data, callback) {
   let out;
   try {
     if (!keyMatches_(key, false)) {
@@ -45,8 +49,12 @@ function api_(action, key, data) {
   } catch (err) {
     out = { ok: false, error: String(err && err.message || err) };
   }
-  return ContentService.createTextOutput(JSON.stringify(out))
-    .setMimeType(ContentService.MimeType.JSON);
+  const json = JSON.stringify(out);
+  if (callback && /^[A-Za-z_$][\w$]*$/.test(callback)) {
+    return ContentService.createTextOutput(callback + '(' + json + ');')
+      .setMimeType(ContentService.MimeType.JAVASCRIPT);
+  }
+  return ContentService.createTextOutput(json).setMimeType(ContentService.MimeType.JSON);
 }
 
 /**
